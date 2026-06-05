@@ -207,6 +207,8 @@
   .week-bars { gap: 3px; }
   .week-bars .month-col { min-width: 0; }
   .week-bars .month-label { font-size: 8px; line-height: 1.2; }
+  .week-stack { gap: 1px !important; }
+  .week-bar-seg { width: 70%; flex-shrink: 0; min-height: 0; border-radius: 2px; }
   .month-amount { font-size: 8px; color: var(--text2); font-family: 'JetBrains Mono', monospace; writing-mode: horizontal-tb; margin-top: 2px; }
   .month-legend { display: flex; gap: 16px; }
   .month-legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text2); font-weight: 500; }
@@ -360,11 +362,8 @@
       <!-- Weekly chart -->
       <div class="section">
         <div class="section-header">
-          <span class="section-title">Evolución semanal</span>
-          <div class="month-legend">
-            <div class="month-legend-item"><div class="month-legend-dot" style="background:var(--green)"></div>In</div>
-            <div class="month-legend-item"><div class="month-legend-dot" style="background:var(--red)"></div>Out</div>
-          </div>
+          <span class="section-title">Gastos semanales</span>
+          <div class="month-legend" id="week-legend"></div>
         </div>
         <div class="monthly-chart">
           <div class="month-bars week-bars" id="week-bars"></div>
@@ -648,7 +647,7 @@ function renderDonut(expenses, totalExp) {
 function renderWeekly() {
   const now = new Date();
   const currentWeekKey = getWeekKey(now);
-  const source = selectedMonth === 'all' ? allData : filteredData;
+  const source = (selectedMonth === 'all' ? allData : filteredData).filter(r => r.type === 'Expense');
 
   let weekStarts = [];
   if (selectedMonth === 'all') {
@@ -672,34 +671,51 @@ function renderWeekly() {
   }
 
   const byWeek = {};
-  weekStarts.forEach(ws => { byWeek[getWeekKey(ws)] = { inc: 0, exp: 0, start: ws }; });
+  weekStarts.forEach(ws => { byWeek[getWeekKey(ws)] = { cats: {}, total: 0 }; });
 
+  const activeParents = new Set();
   source.forEach(r => {
     const key = getWeekKey(r.parsedDate);
     if (!byWeek[key]) return;
-    if (r.type === 'Income') byWeek[key].inc += r.amount;
-    else byWeek[key].exp += r.amount;
+    const parent = PARENT_MAP[r.cat] || '📦 Otros';
+    byWeek[key].cats[parent] = (byWeek[key].cats[parent] || 0) + r.amount;
+    byWeek[key].total += r.amount;
+    activeParents.add(parent);
   });
 
-  const maxVal = Math.max(...Object.values(byWeek).flatMap(v => [v.inc, v.exp]), 1);
+  const maxVal = Math.max(...Object.values(byWeek).map(v => v.total), 1);
   const bars = document.getElementById('week-bars');
+  const legend = document.getElementById('week-legend');
 
   if (weekStarts.length === 0) {
-    bars.innerHTML = '<div class="empty" style="padding:24px">Sin datos para este período</div>';
+    bars.innerHTML = '<div class="empty" style="padding:24px">Sin gastos en este período</div>';
+    legend.innerHTML = '';
     return;
   }
 
+  const parentOrder = [...activeParents].sort();
+  legend.innerHTML = parentOrder.map(parent => `
+    <div class="month-legend-item">
+      <div class="month-legend-dot" style="background:${CAT_COLORS[parent] || '#6b7280'}"></div>
+      ${parent.slice(parent.indexOf(' ') + 1)}
+    </div>
+  `).join('');
+
   bars.innerHTML = weekStarts.map(ws => {
     const key = getWeekKey(ws);
-    const data = byWeek[key] || { inc: 0, exp: 0 };
-    const incH = Math.max((data.inc / maxVal) * 90, data.inc > 0 ? 4 : 0);
-    const expH = Math.max((data.exp / maxVal) * 90, data.exp > 0 ? 4 : 0);
+    const data = byWeek[key] || { cats: {}, total: 0 };
     const isActive = key === currentWeekKey;
+    const segments = parentOrder
+      .filter(parent => data.cats[parent] > 0)
+      .map(parent => {
+        const h = Math.max((data.cats[parent] / maxVal) * 90, 3);
+        return `<div class="week-bar-seg" style="height:${h}px;background:${CAT_COLORS[parent] || '#6b7280'}"></div>`;
+      }).join('');
+
     return `
       <div class="month-col" style="opacity:${isActive ? 1 : 0.75}">
-        <div class="month-bar-wrap">
-          <div class="month-bar income" style="height:${incH}px"></div>
-          <div class="month-bar expense" style="height:${expH}px"></div>
+        <div class="month-bar-wrap week-stack">
+          ${segments || '<div class="week-bar-seg" style="height:2px;background:var(--border)"></div>'}
         </div>
         <div class="month-label ${isActive ? 'active' : ''}">${formatWeekLabel(ws)}</div>
       </div>
