@@ -204,6 +204,9 @@
   .month-bar.expense { background: var(--red); opacity: 0.8; }
   .month-label { font-size: 9px; color: var(--text3); font-family: 'JetBrains Mono', monospace; text-align: center; font-weight: 500; }
   .month-label.active { color: var(--text); font-weight: 700; }
+  .week-bars { gap: 3px; }
+  .week-bars .month-col { min-width: 0; }
+  .week-bars .month-label { font-size: 8px; line-height: 1.2; }
   .month-amount { font-size: 8px; color: var(--text2); font-family: 'JetBrains Mono', monospace; writing-mode: horizontal-tb; margin-top: 2px; }
   .month-legend { display: flex; gap: 16px; }
   .month-legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text2); font-weight: 500; }
@@ -354,6 +357,20 @@
         </div>
       </div>
 
+      <!-- Weekly chart -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">Evolución semanal</span>
+          <div class="month-legend">
+            <div class="month-legend-item"><div class="month-legend-dot" style="background:var(--green)"></div>In</div>
+            <div class="month-legend-item"><div class="month-legend-dot" style="background:var(--red)"></div>Out</div>
+          </div>
+        </div>
+        <div class="monthly-chart">
+          <div class="month-bars week-bars" id="week-bars"></div>
+        </div>
+      </div>
+
       <!-- Monthly chart -->
       <div class="section">
         <div class="section-header">
@@ -460,6 +477,24 @@ function getMonthKey(d) {
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
 }
 
+function getWeekStart(d) {
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  return date;
+}
+
+function getWeekKey(d) {
+  if (!d) return null;
+  const ws = getWeekStart(d);
+  return ws.getFullYear() + '-' + String(ws.getMonth()+1).padStart(2,'0') + '-' + String(ws.getDate()).padStart(2,'0');
+}
+
+function formatWeekLabel(d) {
+  return d.getDate() + '/' + (d.getMonth() + 1);
+}
+
 function buildMonthFilter() {
   const months = new Set();
   allData.forEach(r => {
@@ -543,6 +578,7 @@ function renderAll() {
 
   renderTopExpense(expenses);
   renderDonut(expenses, totalExp);
+  renderWeekly();
   renderMonthly();
   renderCategories(expenses, totalExp);
   renderTransactions();
@@ -607,6 +643,68 @@ function renderDonut(expenses, totalExp) {
       <span class="legend-amount">${fmt(amt)}</span>
     </div>
   `).join('');
+}
+
+function renderWeekly() {
+  const now = new Date();
+  const currentWeekKey = getWeekKey(now);
+  const source = selectedMonth === 'all' ? allData : filteredData;
+
+  let weekStarts = [];
+  if (selectedMonth === 'all') {
+    const currentWeekStart = getWeekStart(now);
+    for (let i = 7; i >= 0; i--) {
+      const ws = new Date(currentWeekStart);
+      ws.setDate(ws.getDate() - i * 7);
+      weekStarts.push(ws);
+    }
+  } else {
+    const seen = new Set();
+    source.forEach(r => {
+      if (!r.parsedDate) return;
+      const key = getWeekKey(r.parsedDate);
+      if (!seen.has(key)) {
+        seen.add(key);
+        weekStarts.push(getWeekStart(r.parsedDate));
+      }
+    });
+    weekStarts.sort((a, b) => a - b);
+  }
+
+  const byWeek = {};
+  weekStarts.forEach(ws => { byWeek[getWeekKey(ws)] = { inc: 0, exp: 0, start: ws }; });
+
+  source.forEach(r => {
+    const key = getWeekKey(r.parsedDate);
+    if (!byWeek[key]) return;
+    if (r.type === 'Income') byWeek[key].inc += r.amount;
+    else byWeek[key].exp += r.amount;
+  });
+
+  const maxVal = Math.max(...Object.values(byWeek).flatMap(v => [v.inc, v.exp]), 1);
+  const bars = document.getElementById('week-bars');
+
+  if (weekStarts.length === 0) {
+    bars.innerHTML = '<div class="empty" style="padding:24px">Sin datos para este período</div>';
+    return;
+  }
+
+  bars.innerHTML = weekStarts.map(ws => {
+    const key = getWeekKey(ws);
+    const data = byWeek[key] || { inc: 0, exp: 0 };
+    const incH = Math.max((data.inc / maxVal) * 90, data.inc > 0 ? 4 : 0);
+    const expH = Math.max((data.exp / maxVal) * 90, data.exp > 0 ? 4 : 0);
+    const isActive = key === currentWeekKey;
+    return `
+      <div class="month-col" style="opacity:${isActive ? 1 : 0.75}">
+        <div class="month-bar-wrap">
+          <div class="month-bar income" style="height:${incH}px"></div>
+          <div class="month-bar expense" style="height:${expH}px"></div>
+        </div>
+        <div class="month-label ${isActive ? 'active' : ''}">${formatWeekLabel(ws)}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 function renderMonthly() {
